@@ -11,6 +11,10 @@ from communication.stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
 from settings import API_IP, API_PORT
+import socket
+from picamera2 import Picamera2
+from libcamera import Transform
+import cv2
 
 
 class PiAction:
@@ -63,6 +67,9 @@ class RaspberryPi:
         # X,Y,D coordinates of the robot after execution of a command
         self.path_queue = self.manager.Queue()
 
+        # WebSocket Video Queue
+        self.video_stream = self.manager.Queue()
+
         self.proc_recv_android = None
         self.proc_recv_stm32 = None
         self.proc_android_sender = None
@@ -93,12 +100,18 @@ class RaspberryPi:
             self.proc_command_follower = Process(target=self.command_follower)
             self.proc_rpi_action = Process(target=self.rpi_action)
 
+            # Added the video stream child process
+            self.proc_video_stream = Process(target=self.video_stream)
+
             # Start child processes
             self.proc_recv_android.start()
             self.proc_recv_stm32.start()
             self.proc_android_sender.start()
             self.proc_command_follower.start()
             self.proc_rpi_action.start()
+            
+            # Added the video stream child process
+            self.proc_video_stream.start()
 
             self.logger.info("Child Processes started")
 
@@ -117,6 +130,59 @@ class RaspberryPi:
         self.android_link.disconnect()
         self.stm_link.disconnect()
         self.logger.info("Program exited!")
+
+    def video_stream(self):
+        """
+        This function sends video frames using Websocket in a loop
+        """
+        HOST = ""
+        PORT = ""
+        CHUNK_SIZE = 60_000
+
+        # Create a UDP WebSocket
+        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        # Initialize Picamera2
+        picam2 = Picamera2()
+        camera_config = picam2.create_still_configuration(main={"size": (1920, 1080)}, transform=Transform(vflip=True, hflip=True))
+        picam2.configure(camera_config)
+        picam2.start()
+
+        
+        try:
+            while True:
+                # Capture an image as numpy array
+                frame = picam2.capture_array()
+
+                # Encode the image into JPEG format
+                result, imgencode = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+                img_data = imgencode.tobytes()
+
+                # Get the length of the image data
+                img_size = len(img_data)
+                print(f'Encoded image size: {img_size} bytes')
+
+                # Send the total size of the image first
+                server.sendto(struct.pack('i', img_size), (HOST, PORT))
+
+                # Split the data into chunks and send each chunk
+                for i in range(0, img_size, CHUNK_SIZE):
+                    chunk = img_data[i:i + CHUNK_SIZE]
+                    # Check if it's the last chunk (send with a flag)
+                    is_last_chunk = 1 if (i + CHUNK_SIZE) >= img_size else 0
+                    server.sendto(struct.pack('B', is_last_chunk), (HOST, PORT))  # Send flag
+                    server.sendto(chunk, (HOST, PORT))  # Send chunk
+
+                print('Have sent one frame')
+
+        except Exception as e:
+            print(e)
+        finally:
+            picam2.stop()
+            server.close()
+
+
+
 
     def reconnect_android(self):
         """Handles the reconnection to Android in the event of a lost connection."""
