@@ -88,30 +88,24 @@ class RaspberryPi:
             ### Start up initialization ###
 
             self.android_link.connect()
-            self.android_queue.put(AndroidMessage(
-                'info', 'You are connected to the RPi!'))
-            self.stm_link.connect()
+            self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
+            #self.stm_link.connect()
             self.check_api()
-
+            #self.stm_link.send("FW10")
             # Define child processes
             self.proc_recv_android = Process(target=self.recv_android)
-            self.proc_recv_stm32 = Process(target=self.recv_stm)
+            #self.proc_recv_stm32 = Process(target=self.recv_stm)
             self.proc_android_sender = Process(target=self.android_sender)
             self.proc_command_follower = Process(target=self.command_follower)
             self.proc_rpi_action = Process(target=self.rpi_action)
 
-            # Added the video stream child process
-            self.proc_video_stream = Process(target=self.video_stream)
-
             # Start child processes
             self.proc_recv_android.start()
-            self.proc_recv_stm32.start()
+            #self.proc_recv_stm32.start()
             self.proc_android_sender.start()
             self.proc_command_follower.start()
             self.proc_rpi_action.start()
             
-            # Added the video stream child process
-            self.proc_video_stream.start()
 
             self.logger.info("Child Processes started")
 
@@ -128,61 +122,10 @@ class RaspberryPi:
     def stop(self):
         """Stops all processes on the RPi and disconnects gracefully with Android and STM32"""
         self.android_link.disconnect()
-        self.stm_link.disconnect()
+        #self.stm_link.disconnect()
         self.logger.info("Program exited!")
 
-    def video_stream(self):
-        """
-        This function sends video frames using Websocket in a loop
-        """
-        HOST = ""
-        PORT = ""
-        CHUNK_SIZE = 60_000
-
-        # Create a UDP WebSocket
-        server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # Initialize Picamera2
-        picam2 = Picamera2()
-        camera_config = picam2.create_still_configuration(main={"size": (1920, 1080)}, transform=Transform(vflip=True, hflip=True))
-        picam2.configure(camera_config)
-        picam2.start()
-
-        
-        try:
-            while True:
-                # Capture an image as numpy array
-                frame = picam2.capture_array()
-
-                # Encode the image into JPEG format
-                result, imgencode = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
-                img_data = imgencode.tobytes()
-
-                # Get the length of the image data
-                img_size = len(img_data)
-                print(f'Encoded image size: {img_size} bytes')
-
-                # Send the total size of the image first
-                server.sendto(struct.pack('i', img_size), (HOST, PORT))
-
-                # Split the data into chunks and send each chunk
-                for i in range(0, img_size, CHUNK_SIZE):
-                    chunk = img_data[i:i + CHUNK_SIZE]
-                    # Check if it's the last chunk (send with a flag)
-                    is_last_chunk = 1 if (i + CHUNK_SIZE) >= img_size else 0
-                    server.sendto(struct.pack('B', is_last_chunk), (HOST, PORT))  # Send flag
-                    server.sendto(chunk, (HOST, PORT))  # Send chunk
-
-                print('Have sent one frame')
-
-        except Exception as e:
-            print(e)
-        finally:
-            picam2.stop()
-            server.close()
-
-
-
+    
 
     def reconnect_android(self):
         """Handles the reconnection to Android in the event of a lost connection."""
@@ -295,6 +238,7 @@ class RaspberryPi:
                     self.movement_lock.release()
                     try:
                         self.retrylock.release()
+                        pass
                     except:
                         pass
                     self.logger.debug(
@@ -357,8 +301,8 @@ class RaspberryPi:
             self.movement_lock.acquire()
 
             # STM32 Commands - Send straight to STM32
-            stm32_prefixes = ("FS", "BS", "FW", "BW", "FL", "FR", "BL",
-                              "BR", "TL", "TR", "A", "C", "DT", "STOP", "ZZ", "RS")
+            stm32_prefixes = ("FW", "BW", "FL", "FR", "BL",
+                              "BR")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
                 self.logger.debug(f"Sending to STM32: {command}")
@@ -371,11 +315,11 @@ class RaspberryPi:
                     PiAction(cat="snap", value=obstacle_id_with_signal))
 
             # End of path
-            elif command == "FIN":
+            elif command == "FN":
                 self.logger.info(
-                    f"At FIN, self.failed_obstacles: {self.failed_obstacles}")
+                    f"At FN, self.failed_obstacles: {self.failed_obstacles}")
                 self.logger.info(
-                    f"At FIN, self.current_location: {self.current_location}")
+                    f"At FN, self.current_location: {self.current_location}")
                 if len(self.failed_obstacles) != 0 and self.failed_attempt == False:
 
                     new_obstacle_list = list(self.failed_obstacles)
@@ -413,7 +357,7 @@ class RaspberryPi:
 
             if action.cat == "obstacles":
                 for obs in action.value['obstacles']:
-                    self.obstacles[obs['id']] = obs
+                    self.obstacles[obs['obstacleNumber']] = obs
                 self.request_algo(action.value)
             elif action.cat == "snap":
                 self.snap_and_rec(obstacle_id_with_signal=action.value)
@@ -582,6 +526,7 @@ class RaspberryPi:
         result = json.loads(response.content)['data']
         commands = result['commands']
         path = result['path']
+        print(response.content)
 
         # Log commands received
         self.logger.debug(f"Commands received from API: {commands}")
