@@ -385,30 +385,50 @@ class RaspberryPi:
                 
     def initialize_camera(self):
         """ initialize PiCamera object"""
-        self.camera = Picamera2()
-        camera_config = self.camera.create_still_configuration()
-        self.camera.configure(camera_config)
-        #self.camera.start()
-        self.logger.info("Camera initialized and ready")
+        try:
+            self.camera = Picamera2()
+            camera_config = self.camera.create_still_configuration()
+            self.camera.configure(camera_config)
+            self.logger.info("Camera initialized and ready")
+        except:
+            self.logger.info("Camera not initialized")
         
     def capture_image(self, obstacle_id_with_signal):
         """Function to capture an image using Picamera2 and return it as a numpy array."""
-        self.camera.start()
-        self.logger.info("Camera Start")
-
-        # Capture an image as a numpy array
-        frame = self.camera.capture_array()
-        self.logger.info("Capturing image")
-
-        # Stop the camera
-        self.camera.stop()
-        self.logger.info("Camera Stop")
-        
-        file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
-        self.logger.info(f"File Path: {file_path}")
-        cv2.imwrite(file_path, frame)
-        self.logger.info("Image saved")
-        return file_path
+        file_path = None
+        if self.camera is not None:
+            try:
+                self.camera.start()
+                self.logger.info("Camera Start")
+            except:
+                self.logger.info("Failed to start camera")
+                
+            try:
+                # Capture an image as a numpy array
+                frame = self.camera.capture_array()
+                self.logger.info("Capturing image")
+            except:
+                self.logger.info("Failed to capture image")
+                self.camera.stop()
+                return None
+                
+            try:
+                # Stop the camera
+                self.camera.stop()
+                self.logger.info("Camera Stop")
+            except:
+                self.logger.info("Failed to stop camera")
+            
+            file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
+            try:
+                self.logger.info(f"File Path: {file_path}")
+                cv2.imwrite(file_path, frame)
+                self.logger.info("Image saved")
+            except:
+                self.logger.info("Failed to save image")
+                return None
+            return file_path
+        else: return None
         
     def snap_and_rec(self, obstacle_id_with_signal: str) -> None:
         """
