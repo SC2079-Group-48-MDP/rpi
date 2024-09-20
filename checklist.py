@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json
 import queue
-import time
+from datetime import datetime
 from multiprocessing import Process, Manager
 from typing import Optional
 import os
@@ -15,6 +15,7 @@ import socket
 from picamera2 import Picamera2
 from libcamera import Transform
 import cv2
+import io
 
 
 class PiAction:
@@ -67,9 +68,6 @@ class RaspberryPi:
         # X,Y,D coordinates of the robot after execution of a command
         self.path_queue = self.manager.Queue()
 
-        # WebSocket Video Queue
-        self.video_stream = self.manager.Queue()
-
         self.proc_recv_android = None
         self.proc_recv_stm32 = None
         self.proc_android_sender = None
@@ -81,6 +79,11 @@ class RaspberryPi:
         self.obstacles = self.manager.dict()
         self.current_location = self.manager.dict()
         self.failed_attempt = False
+        
+        # Create a global Camera Instance
+        self.camera = None
+        self.initialize_camera()
+        
 
     def start(self):
         """Starts the RPi orchestrator"""
@@ -236,33 +239,34 @@ class RaspberryPi:
                 if self.rs_flag == False:
                     self.rs_flag = True
                     self.logger.debug("ACK for RS00 from STM32 received.")
-                    #continue
+                    continue
                 try:
-                    if self.movement_lock.acquire(timeout=0.1):
-                        self.movement_lock.release()
+                    #if self.movement_lock.acquire(timeout=5):
+                    self.movement_lock.release()
                     self.logger.debug("Movement lock released after ACK received!")
+                    #self.logger.debug("Movement lock released!")
                     try:
-                        if self.retrylock.locked():
-                            self.retrylock.release()
-                        pass
+                        self.retrylock.release()
                     except:
+                        self.logger.debug("Failed to release retry lock")
                         pass
-                    self.logger.debug(
-                        "ACK from STM32 received, movement lock released.")
 
                     cur_location = self.path_queue.get_nowait()
 
                     self.current_location['x'] = cur_location['x']
                     self.current_location['y'] = cur_location['y']
                     self.current_location['d'] = cur_location['d']
+                    # Update the current robot location
                     self.logger.info(
-                        f"self.current_location = {self.current_location}")
+                        f"Current location = {self.current_location}")
+                    # Send the new robot location to Andriod to be updated on the screen
                     self.android_queue.put(AndroidMessage('location', {
                         "x": cur_location['x'],
                         "y": cur_location['y'],
                         "d": cur_location['d'],
                     }))
-
+                    
+                    
                 except:
                     self.logger.warning("Tried to release a released lock!")
             else:
@@ -292,21 +296,26 @@ class RaspberryPi:
         """
         while True:
             # Retrieve next movement command
-            command: str = self.command_queue.get()
-            self.logger.info(f"Command left: {self.command_queue.qsize()}")
-            self.logger.debug("wait for unpause")
+            
+            try:
+                command: str = self.command_queue.get()
+                self.logger.debug(f"Next Command: {command}")
+            except:
+                self.logger.debug("Error getting the next command")
+            self.logger.debug(f"wait for unpause - {command}")
             # Wait for unpause event to be true [Main Trigger]
             try:
-                self.logger.debug("wait for retrylock")
-                self.retrylock.acquire()
+                self.logger.debug(f"Trying to acquire retrylock - {command}")
+                self.retrylock.acquire(timeout=1)
                 self.retrylock.release()
+                self.logger.debug(f"Acquired retrylock - {command}")
             except:
-                self.logger.debug("wait for unpause")
+                self.logger.debug(f"Fail to acquire retry lock - {command}")
                 self.unpause.wait()
-            self.logger.debug("wait for movelock")
+            self.logger.debug(f"wait for movelock - {command}")
             # Acquire lock first (needed for both moving, and snapping pictures)
             self.movement_lock.acquire()
-            self.logger.debug(f"Movement lock acquired!")
+            self.logger.debug(f"Movement lock acquired! - {command}")
             
             # STM32 Commands - Send straight to STM32
             stm32_prefixes = ("FW", "BW", "FL", "FR", "BL",
@@ -350,7 +359,7 @@ class RaspberryPi:
                 self.android_queue.put(AndroidMessage(
                     "info", "Commands queue finished."))
                 self.android_queue.put(AndroidMessage("status", "finished"))
-                self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
+                #self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
             else:
                 raise Exception(f"Unknown command: {command}")
 
@@ -373,28 +382,55 @@ class RaspberryPi:
                 self.snap_and_rec(obstacle_id_with_signal=action.value)
             elif action.cat == "stitch":
                 self.request_stitch()
+                
+    def initialize_camera(self):
+        """ initialize PiCamera object"""
+        self.camera = Picamera2()
+        camera_config = self.camera.create_still_configuration()
+        self.camera.configure(camera_config)
+        #self.camera.start()
+        self.logger.info("Camera initialized and ready")
+        
+    def capture_image(self, obstacle_id_with_signal):
+        """Function to capture an image using Picamera2 and return it as a numpy array."""
+        self.camera.start()
+        self.logger.info("Camera Start")
 
-    def snap_and_rec(self, obstacle_id: str) -> None:
+        # Capture an image as a numpy array
+        frame = self.camera.capture_array()
+        self.logger.info("Capturing image")
+
+        # Stop the camera
+        self.camera.stop()
+        self.logger.info("Camera Stop")
+        
+        file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
+        self.logger.info(f"File Path: {file_path}")
+        cv2.imwrite(file_path, frame)
+        self.logger.info("Image saved")
+        return file_path
+        
+    def snap_and_rec(self, obstacle_id_with_signal: str) -> None:
         """
         RPi snaps an image and calls the API for image-rec.
         The response is then forwarded back to the android
         :param obstacle_id: the current obstacle ID
         """
-
+        obstacle_id, signal = obstacle_id_with_signal.split('_')
+        
         # notify android
         self.logger.info(f"Capturing image for obstacle id: {obstacle_id}")
         self.android_queue.put(AndroidMessage("info", f"Capturing image for obstacle id: {obstacle_id}"))
 
-        # capture an image
-        stream = io.BytesIO()
-        with picamera.PiCamera() as camera:
-            camera.start_preview()
-            time.sleep(1)
-            camera.capture(stream, format='jpeg')
+        file_path = None
+        try:    
+            file_path = self.capture_image(obstacle_id_with_signal)
+            #self.logger.info("Image captured. Calling image-rec api...")
+        except:
+            self.logger.debug("Error capturing image")
 
         # notify android
-        self.android_queue.put(AndroidMessage("info", "Image captured. Calling image-rec api..."))
-        self.logger.info("Image captured. Calling image-rec api...")
+        self.android_queue.put(AndroidMessage("info", "Image captured. Calling image-rec api..."))  
 
         # release lock so that bot can continue moving
         self.movement_lock.release()
@@ -402,14 +438,12 @@ class RaspberryPi:
         # call image-rec API endpoint
         self.logger.debug("Requesting from image API")
         url = f"http://{API_IP}:{API_PORT}/image"
-        #filename = f"{int(time.time())}_{obstacle_id}.jpg"
-        image_data = stream.getvalue()
-        file = {'file':('',image_data,'image/jpeg')}
+        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
         data = {
             'obstacle_id': obstacle_id,
-            'signal': 'L'
+            'signal': signal
         }
-        response = requests.post(url, files=file, data=data)
+        response = requests.post(url, files=img_file, data=data)
 
         if response.status_code != 200:
             self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
