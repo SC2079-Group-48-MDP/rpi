@@ -89,19 +89,19 @@ class RaspberryPi:
 
             self.android_link.connect()
             self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
-            #self.stm_link.connect()
+            self.stm_link.connect()
             self.check_api()
-            #self.stm_link.send("FW10")
+            self.stm_link.send("FW10")
             # Define child processes
             self.proc_recv_android = Process(target=self.recv_android)
-            #self.proc_recv_stm32 = Process(target=self.recv_stm)
+            self.proc_recv_stm32 = Process(target=self.recv_stm)
             self.proc_android_sender = Process(target=self.android_sender)
             self.proc_command_follower = Process(target=self.command_follower)
             self.proc_rpi_action = Process(target=self.rpi_action)
 
             # Start child processes
             self.proc_recv_android.start()
-            #self.proc_recv_stm32.start()
+            self.proc_recv_stm32.start()
             self.proc_android_sender.start()
             self.proc_command_follower.start()
             self.proc_rpi_action.start()
@@ -122,7 +122,7 @@ class RaspberryPi:
     def stop(self):
         """Stops all processes on the RPi and disconnects gracefully with Android and STM32"""
         self.android_link.disconnect()
-        #self.stm_link.disconnect()
+        self.stm_link.disconnect()
         self.logger.info("Program exited!")
 
     
