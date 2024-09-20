@@ -90,8 +90,7 @@ class RaspberryPi:
             self.android_link.connect()
             self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
             self.stm_link.connect()
-            self.check_api()
-            self.stm_link.send("FW10")
+            self.check_api()    
             # Define child processes
             self.proc_recv_android = Process(target=self.recv_android)
             self.proc_recv_stm32 = Process(target=self.recv_stm)
@@ -205,10 +204,9 @@ class RaspberryPi:
 
                     # Commencing path following
                     if not self.command_queue.empty():
-                        self.logger.info("Gryo reset!")
-                        self.stm_link.send("RS00")
+                        
                         # Main trigger to start movement #
-                        self.unpause.set()
+                        self.unpause.set()  
                         self.logger.info(
                             "Start command received, starting robot on path!")
                         self.android_queue.put(AndroidMessage(
@@ -220,6 +218,11 @@ class RaspberryPi:
                             "The command queue is empty, please set obstacles.")
                         self.android_queue.put(AndroidMessage(
                             "error", "Command queue is empty, did you set obstacles?"))
+                            
+            elif message['cat'] == "location":
+                self.logger.info("Gryo reset!")
+                self.stm_link.send("RS00")
+                
 
     def recv_stm(self) -> None:
         """
@@ -233,11 +236,14 @@ class RaspberryPi:
                 if self.rs_flag == False:
                     self.rs_flag = True
                     self.logger.debug("ACK for RS00 from STM32 received.")
-                    continue
+                    #continue
                 try:
-                    self.movement_lock.release()
+                    if self.movement_lock.acquire(timeout=0.1):
+                        self.movement_lock.release()
+                    self.logger.debug("Movement lock released after ACK received!")
                     try:
-                        self.retrylock.release()
+                        if self.retrylock.locked():
+                            self.retrylock.release()
                         pass
                     except:
                         pass
@@ -257,7 +263,7 @@ class RaspberryPi:
                         "d": cur_location['d'],
                     }))
 
-                except Exception:
+                except:
                     self.logger.warning("Tried to release a released lock!")
             else:
                 self.logger.warning(
@@ -287,6 +293,7 @@ class RaspberryPi:
         while True:
             # Retrieve next movement command
             command: str = self.command_queue.get()
+            self.logger.info(f"Command left: {self.command_queue.qsize()}")
             self.logger.debug("wait for unpause")
             # Wait for unpause event to be true [Main Trigger]
             try:
@@ -299,13 +306,14 @@ class RaspberryPi:
             self.logger.debug("wait for movelock")
             # Acquire lock first (needed for both moving, and snapping pictures)
             self.movement_lock.acquire()
-
+            self.logger.debug(f"Movement lock acquired!")
+            
             # STM32 Commands - Send straight to STM32
             stm32_prefixes = ("FW", "BW", "FL", "FR", "BL",
-                              "BR")
+                              "BR", "RS")
             if command.startswith(stm32_prefixes):
-                self.stm_link.send(command)
-                self.logger.debug(f"Sending to STM32: {command}")
+                    self.stm_link.send(command) 
+                    self.logger.debug(f"Sending to STM32:{command}")
 
             # Snap command
             elif command.startswith("SNAP"):
@@ -331,7 +339,7 @@ class RaspberryPi:
                     self.logger.info("Attempting to go to failed obstacles")
                     self.failed_attempt = True
                     self.request_algo({'obstacles': new_obstacle_list, 'mode': '0'},
-                                      self.current_location['x'], self.current_location['y'], self.current_location['d'], retrying=True)
+                                        self.current_location['x'], self.current_location['y'], self.current_location['d'], retrying=True)
                     self.retrylock = self.manager.Lock()
                     self.movement_lock.release()
                     continue
@@ -345,6 +353,8 @@ class RaspberryPi:
                 self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
             else:
                 raise Exception(f"Unknown command: {command}")
+
+                
 
     def rpi_action(self):
         """
@@ -392,9 +402,14 @@ class RaspberryPi:
         # call image-rec API endpoint
         self.logger.debug("Requesting from image API")
         url = f"http://{API_IP}:{API_PORT}/image"
-        filename = f"{int(time.time())}_{obstacle_id}.jpg"
+        #filename = f"{int(time.time())}_{obstacle_id}.jpg"
         image_data = stream.getvalue()
-        response = requests.post(url, files={"file": (filename, image_data)})
+        file = {'file':('',image_data,'image/jpeg')}
+        data = {
+            'obstacle_id': obstacle_id,
+            'signal': 'L'
+        }
+        response = requests.post(url, files=file, data=data)
 
         if response.status_code != 200:
             self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
@@ -469,7 +484,49 @@ class RaspberryPi:
         except Exception as e:
             self.logger.warning(f"API Exception: {e}")
             return False
+    
+    def request_algo(self, data, robot_x=1, robot_y=1, robot_dir=0, retrying=False):
+        """
+        Requests for a series of commands and the path from the Algo API.
+        The received commands and path are then queued in the respective queues
+        """
+        self.logger.info("Requesting path from algo...")
+        self.android_queue.put(AndroidMessage(
+            "info", "Requesting path from algo..."))
+        self.logger.info(f"data: {data}")
+        body = {**data, "big_turn": "0", "robot_x": robot_x,
+                "robot_y": robot_y, "robot_dir": robot_dir, "retrying": retrying}
+        url = f"http://{API_IP}:{API_PORT}/path"
+        response = requests.post(url, json=body)
 
+        # Error encountered at the server, return early
+        if response.status_code != 200:
+            self.android_queue.put(AndroidMessage(
+                "error", "Something went wrong when requesting path from Algo API."))
+            self.logger.error(
+                "Something went wrong when requesting path from Algo API.")
+            return
+
+        # Parse response
+        result = json.loads(response.content)['data']
+        commands = result['commands']
+        path = result['path']
+        print(response.content)
+
+        # Log commands received
+        self.logger.debug(f"Commands received from API: {commands}")
+
+        # Put commands and paths into respective queues
+        self.clear_queues()
+        for c in commands:
+            self.command_queue.put(c)
+        for p in path[1:]:  # ignore first element as it is the starting position of the robot
+            self.path_queue.put(p)
+
+        self.android_queue.put(AndroidMessage(
+            "info", "Commands and path received Algo API. Robot is ready to move."))
+        self.logger.info(
+            "Commands and path received Algo API. Robot is ready to move.")
 
 if __name__ == "__main__":
     rpi = RaspberryPi()
