@@ -82,7 +82,7 @@ class RaspberryPi:
         
         # Create a global Camera Instance
         self.camera = None
-        self.initialize_camera()
+        #self.initialize_camera()
         
 
     def start(self):
@@ -383,93 +383,49 @@ class RaspberryPi:
             elif action.cat == "stitch":
                 self.request_stitch()
                 
-    def initialize_camera(self):
-        """ initialize PiCamera object"""
-        try:
-            self.camera = Picamera2()
-            camera_config = self.camera.create_still_configuration()
-            self.camera.configure(camera_config)
-            self.logger.info("Camera initialized and ready")
-        except:
-            self.logger.info("Camera not initialized")
-        
-    def capture_image(self, obstacle_id_with_signal):
-        """Function to capture an image using Picamera2 and return it as a numpy array."""
-        file_path = None
-        if self.camera is not None:
-            try:
-                self.camera.start()
-                self.logger.info("Camera Start")
-            except:
-                self.logger.info("Failed to start camera")
-                
-            try:
-                # Capture an image as a numpy array
-                frame = self.camera.capture_array()
-                self.logger.info("Capturing image")
-            except:
-                self.logger.info("Failed to capture image")
-                self.camera.stop()
-                return None
-                
-            try:
-                # Stop the camera
-                self.camera.stop()
-                self.logger.info("Camera Stop")
-            except:
-                self.logger.info("Failed to stop camera")
-            
-            file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
-            try:
-                self.logger.info(f"File Path: {file_path}")
-                cv2.imwrite(file_path, frame)
-                self.logger.info("Image saved")
-            except:
-                self.logger.info("Failed to save image")
-                return None
-            return file_path
-        else: return None
-        
+           
     def snap_and_rec(self, obstacle_id_with_signal: str) -> None:
         """
         RPi snaps an image and calls the API for image-rec.
         The response is then forwarded back to the android
-        :param obstacle_id: the current obstacle ID
+        :param obstacle_id_with_signal: the current obstacle ID and signal combined
         """
         obstacle_id, signal = obstacle_id_with_signal.split('_')
-        
-        # notify android
         self.logger.info(f"Capturing image for obstacle id: {obstacle_id}")
         self.android_queue.put(AndroidMessage("info", f"Capturing image for obstacle id: {obstacle_id}"))
 
-        file_path = None
-        try:    
-            file_path = self.capture_image(obstacle_id_with_signal)
-            #self.logger.info("Image captured. Calling image-rec api...")
-        except:
-            self.logger.debug("Error capturing image")
+        try:
+            # Initialize and configure the camera each time
+            self.camera = Picamera2()
+            camera_config = self.camera.create_still_configuration()
+            self.camera.configure(camera_config)
+            self.camera.start()
 
-        # notify android
-        self.android_queue.put(AndroidMessage("info", "Image captured. Calling image-rec api..."))  
+            # Capture the image
+            frame = self.camera.capture_array()
+            file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
+            cv2.imwrite(file_path, frame)
+            self.logger.info("Image captured and saved.")
 
-        # release lock so that bot can continue moving
-        self.movement_lock.release()
-
-        # call image-rec API endpoint
-        self.logger.debug("Requesting from image API")
-        url = f"http://{API_IP}:{API_PORT}/image"
-        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-        data = {
-            'obstacle_id': obstacle_id,
-            'signal': signal
-        }
-        response = requests.post(url, files=img_file, data=data)
-
-        if response.status_code != 200:
-            self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
-            self.android_queue.put(AndroidMessage(
-                "error", "Something went wrong when requesting path from image-rec API. Please try again."))
+            # Stop and release the camera
+            self.camera.stop()
+        except Exception as e:
+            self.logger.error(f"Error capturing image: {str(e)}")
+            self.android_queue.put(AndroidMessage("error", "Failed to capture image."))
             return
+        
+        # Proceed with sending the image to the API
+        url = f"http://{API_IP}:{API_PORT}/image"
+            #self.logger.info("Img size: ", len(img))
+        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+        data = {'obstacle_id': str(obstacle_id), 'signal': str(signal)}
+        
+        response = requests.post(url, files=img_file, data=data)
+        img_file['files'][1].close()
+        if response.status_code == 200:
+            self.logger.info("Image-rec API called successfully.")
+        else:
+            self.logger.error(f"Failed to call image-rec API: {response.status_code}")
 
         results = json.loads(response.content)
 
