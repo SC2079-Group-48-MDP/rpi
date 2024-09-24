@@ -90,143 +90,44 @@ class RaspberryPi:
         try:
             ### Start up initialization ###
 
-            self.android_link.connect()
-            self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
+            #self.android_link.connect()
+            #self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
             self.stm_link.connect()
             self.check_api()    
             # Define child processes
-            self.proc_recv_android = Process(target=self.recv_android)
+            #self.proc_recv_android = Process(target=self.recv_android)
             self.proc_recv_stm32 = Process(target=self.recv_stm)
-            self.proc_android_sender = Process(target=self.android_sender)
-            self.proc_command_follower = Process(target=self.command_follower)
-            self.proc_rpi_action = Process(target=self.rpi_action)
+            #self.proc_android_sender = Process(target=self.android_sender)
+            #self.proc_command_follower = Process(target=self.command_follower)
+            #self.proc_rpi_action = Process(target=self.rpi_action)
 
             # Start child processes
-            self.proc_recv_android.start()
+            #self.proc_recv_android.start()
             self.proc_recv_stm32.start()
-            self.proc_android_sender.start()
-            self.proc_command_follower.start()
-            self.proc_rpi_action.start()
-            
+            #self.proc_android_sender.start()
+            #self.proc_command_follower.start()
+            #self.proc_rpi_action.start()
+            #self.rpi_action_queue.put(PiAction(cat="control", value={}))
 
             self.logger.info("Child Processes started")
 
             ### Start up complete ###
 
             # Send success message to Android
-            self.android_queue.put(AndroidMessage('info', 'Robot is ready!'))
-            self.android_queue.put(AndroidMessage('mode', 'path'))
-            self.reconnect_android()
+            #self.android_queue.put(AndroidMessage('info', 'Robot is ready!'))
+            #self.android_queue.put(AndroidMessage('mode', 'path'))
+            #self.reconnect_android()
 
         except KeyboardInterrupt:
             self.stop()
 
     def stop(self):
         """Stops all processes on the RPi and disconnects gracefully with Android and STM32"""
-        self.android_link.disconnect()
+        #self.android_link.disconnect()
         self.stm_link.disconnect()
-        self.logger.info("Program exited!")
+        self.logger.info("Program exited!")    
 
     
-
-    def reconnect_android(self):
-        """Handles the reconnection to Android in the event of a lost connection."""
-        self.logger.info("Reconnection handler is watching...")
-
-        while True:
-            # Wait for android connection to drop
-            self.android_dropped.wait()
-
-            self.logger.error("Android link is down!")
-
-            # Kill child processes
-            self.logger.debug("Killing android child processes")
-            self.proc_android_sender.kill()
-            self.proc_recv_android.kill()
-
-            # Wait for the child processes to finish
-            self.proc_android_sender.join()
-            self.proc_recv_android.join()
-            assert self.proc_android_sender.is_alive() is False
-            assert self.proc_recv_android.is_alive() is False
-            self.logger.debug("Android child processes killed")
-
-            # Clean up old sockets
-            self.android_link.disconnect()
-
-            # Reconnect
-            self.android_link.connect()
-
-            # Recreate Android processes
-            self.proc_recv_android = Process(target=self.recv_android)
-            self.proc_android_sender = Process(target=self.android_sender)
-
-            # Start previously killed processes
-            self.proc_recv_android.start()
-            self.proc_android_sender.start()
-
-            self.logger.info("Android child processes restarted")
-            self.android_queue.put(AndroidMessage(
-                "info", "You are reconnected!"))
-            self.android_queue.put(AndroidMessage('mode', 'path'))
-
-            self.android_dropped.clear()
-
-    def recv_android(self) -> None:
-        """
-        [Child Process] Processes the messages received from Android
-        """
-        while True:
-            msg_str: Optional[str] = None
-            try:
-                msg_str = self.android_link.recv()
-            except OSError:
-                self.android_dropped.set()
-                self.logger.debug("Event set: Android connection dropped")
-
-            if msg_str is None:
-                continue
-
-            message: dict = json.loads(msg_str)
-
-            ## Command: Set obstacles ##
-            if message['cat'] == "obstacles":
-                self.rpi_action_queue.put(PiAction(**message))
-                self.logger.debug(
-                    f"Set obstacles PiAction added to queue: {message}")
-
-            ## Command: Start Moving ##
-            elif message['cat'] == "control":
-                if message['value'] == "start":
-                    # Check API
-                    if not self.check_api():
-                        self.logger.error(
-                            "API is down! Start command aborted.")
-                        self.android_queue.put(AndroidMessage(
-                            'error', "API is down, start command aborted."))
-
-                    # Commencing path following
-                    if not self.command_queue.empty():
-                        
-                        # Main trigger to start movement #
-                        self.unpause.set()  
-                        self.logger.info(
-                            "Start command received, starting robot on path!")
-                        self.android_queue.put(AndroidMessage(
-                            'info', 'Starting robot on path!'))
-                        self.android_queue.put(
-                            AndroidMessage('status', 'running'))
-                    else:
-                        self.logger.warning(
-                            "The command queue is empty, please set obstacles.")
-                        self.android_queue.put(AndroidMessage(
-                            "error", "Command queue is empty, did you set obstacles?"))
-                            
-            elif message['cat'] == "location":
-                self.logger.info("Gryo reset!")
-                self.stm_link.send("RS00")
-                
-
     def recv_stm(self) -> None:
         """
         [Child Process] Receive acknowledgement messages from STM32, and release the movement lock
@@ -269,6 +170,10 @@ class RaspberryPi:
                     
                 except:
                     self.logger.warning("Tried to release a released lock!")
+            elif message.startswith("SNAP"):
+                self.logger.info("Sending API requests to image server")
+                _, obstacle_id = message.split('_')
+                self.snap_and_rec(obstacle_id)
             else:
                 self.logger.warning(
                     f"Ignored unknown message from STM: {message}")
@@ -356,9 +261,9 @@ class RaspberryPi:
                 self.unpause.clear()
                 self.movement_lock.release()
                 self.logger.info("Commands queue finished.")
-                self.android_queue.put(AndroidMessage(
-                    "info", "Commands queue finished."))
-                self.android_queue.put(AndroidMessage("status", "finished"))
+                #self.android_queue.put(AndroidMessage(
+                    #"info", "Commands queue finished."))
+                #self.android_queue.put(AndroidMessage("status", "finished"))
                 #self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
             else:
                 raise Exception(f"Unknown command: {command}")
@@ -384,15 +289,15 @@ class RaspberryPi:
                 self.request_stitch()
                 
            
-    def snap_and_rec(self, obstacle_id_with_signal: str) -> None:
+    def snap_and_rec(self, obstacle_id: str) -> None:
         """
         RPi snaps an image and calls the API for image-rec.
         The response is then forwarded back to the android
         :param obstacle_id_with_signal: the current obstacle ID and signal combined
         """
-        obstacle_id, signal = obstacle_id_with_signal.split('_')
+        #obstacle_id, signal = obstacle_id_with_signal.split('_')
         self.logger.info(f"Capturing image for obstacle id: {obstacle_id}")
-        self.android_queue.put(AndroidMessage("info", f"Capturing image for obstacle id: {obstacle_id}"))
+        #self.android_queue.put(AndroidMessage("info", f"Capturing image for obstacle id: {obstacle_id}"))
 
         try:
             # Initialize and configure the camera each time
@@ -403,22 +308,23 @@ class RaspberryPi:
 
             # Capture the image
             frame = self.camera.capture_array()
-            file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id_with_signal}.jpg'
+            file_path = f'{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg'
             cv2.imwrite(file_path, frame)
             self.logger.info("Image captured and saved.")
 
             # Stop and release the camera
             self.camera.stop()
+            self.camera.close()
         except Exception as e:
             self.logger.error(f"Error capturing image: {str(e)}")
-            self.android_queue.put(AndroidMessage("error", "Failed to capture image."))
+            #self.android_queue.put(AndroidMessage("error", "Failed to capture image."))
             return
         
         # Proceed with sending the image to the API
         url = f"http://{API_IP}:{API_PORT}/image"
             #self.logger.info("Img size: ", len(img))
         img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-        data = {'obstacle_id': str(obstacle_id), 'signal': str(signal)}
+        data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
         
         response = requests.post(url, files=img_file, data=data)
         img_file['files'][1].close()
@@ -432,19 +338,16 @@ class RaspberryPi:
         # for stopping the robot upon finding a non-bullseye face (checklist: navigating around obstacle)
         if results.get("stop"):
             # stop issuing commands
-            self.unpause.clear()
-
-            # clear commands queue
-            while not self.command_queue.empty():
-                self.command_queue.get()
 
             self.logger.info("Found non-bullseye face, remaining commands and path cleared.")
-            self.android_queue.put(AndroidMessage("info", "Found non-bullseye face, remaining commands cleared."))
+            #self.android_queue.put(AndroidMessage("info", "Found non-bullseye face, remaining commands cleared."))
+        else: 
+            self.stm_link.send("asdd") 
 
         self.logger.info(f"Image recognition results: {results} ({SYMBOL_MAP.get(results['image_id'])})")
 
         # notify android of image-rec results
-        self.android_queue.put(AndroidMessage("image-rec", results))
+        #self.android_queue.put(AndroidMessage("image-rec", results))
 
     def request_stitch(self):
         """Sends a stitch request to the image recognition API to stitch the different images together"""
