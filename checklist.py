@@ -10,7 +10,7 @@ from communication.android import AndroidLink, AndroidMessage
 from communication.stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
-from settings import API_IP, API_PORT
+from settings import API_IP, API_IP_START, API_IP_END, API_PORT
 import socket
 from picamera2 import Picamera2
 from libcamera import Transform
@@ -83,7 +83,7 @@ class RaspberryPi:
         # Create a global Camera Instance
         self.camera = None
         #self.initialize_camera()
-        
+        self.valid_api = API_IP + str(endpoint)
 
     def start(self):
         """Starts the RPi orchestrator"""
@@ -93,7 +93,15 @@ class RaspberryPi:
             #self.android_link.connect()
             #self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
             self.stm_link.connect()
-            self.check_api()    
+            
+            for endpoint in range(API_IP_START, API_IP_END+1):
+                self.valid_api = API_IP + str(endpoint)  
+                if self.check_api():
+                    self.logger.debug("API successfully set up at", self.valid_api)
+                    break
+                elif endpoint == API_IP_END:
+                    self.logger.warning("No valid IP address to connect API")
+
             # Define child processes
             #self.proc_recv_android = Process(target=self.recv_android)
             self.proc_recv_stm32 = Process(target=self.recv_stm)
@@ -319,21 +327,28 @@ class RaspberryPi:
             self.logger.error(f"Error capturing image: {str(e)}")
             #self.android_queue.put(AndroidMessage("error", "Failed to capture image."))
             return
-        
-        # Proceed with sending the image to the API
-        url = f"http://{API_IP}:{API_PORT}/image"
-            #self.logger.info("Img size: ", len(img))
-        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-        data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
-        
-        response = requests.post(url, files=img_file, data=data)
-        img_file['files'][1].close()
-        if response.status_code == 200:
-            self.logger.info("Image-rec API called successfully.")
-        else:
-            self.logger.error(f"Failed to call image-rec API: {response.status_code}")
 
-        results = json.loads(response.content)
+        results = null
+        
+        while results == null:
+            # Proceed with sending the image to the API
+            url = f"http://{self.valid_api}:{API_PORT}/image"
+                #self.logger.info("Img size: ", len(img))
+            img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+            data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
+            
+            response = requests.post(url, files=img_file, data=data)
+            img_file['files'][1].close()
+            if response.status_code == 200:
+                self.logger.info("Image-rec API called successfully.")
+            else:
+                self.logger.error(f"Failed to call image-rec API: {response.status_code}")
+
+
+            results = json.loads(response.content)
+            if results == null:
+                self.stm_link.send("BW20")
+                moved = True
 
         # for stopping the robot upon finding a non-bullseye face (checklist: navigating around obstacle)
         if results.get("stop"):
@@ -351,7 +366,7 @@ class RaspberryPi:
 
     def request_stitch(self):
         """Sends a stitch request to the image recognition API to stitch the different images together"""
-        url = f"http://{API_IP}:{API_PORT}/stitch"
+        url = f"http://{self.valid_api}:{API_PORT}/stitch"
         response = requests.get(url)
 
         # If error, then log, and send error to Android
@@ -380,7 +395,7 @@ class RaspberryPi:
             bool: True if running, False if not.
         """
         # Check image recognition API
-        url = f"http://{API_IP}:{API_PORT}/status"
+        url = f"http://{self.valid_api}:{API_PORT}/status"
         try:
             response = requests.get(url, timeout=1)
             if response.status_code == 200:
@@ -409,7 +424,7 @@ class RaspberryPi:
         self.logger.info(f"data: {data}")
         body = {**data, "big_turn": "0", "robot_x": robot_x,
                 "robot_y": robot_y, "robot_dir": robot_dir, "retrying": retrying}
-        url = f"http://{API_IP}:{API_PORT}/path"
+        url = f"http://{self.valid_api}:{API_PORT}/path"
         response = requests.post(url, json=body)
 
         # Error encountered at the server, return early
