@@ -327,28 +327,22 @@ class RaspberryPi:
             self.logger.error(f"Error capturing image: {str(e)}")
             #self.android_queue.put(AndroidMessage("error", "Failed to capture image."))
             return
-
-        results = null
         
-        while results == null:
-            # Proceed with sending the image to the API
-            url = f"http://{self.valid_api}:{API_PORT}/image"
-                #self.logger.info("Img size: ", len(img))
-            img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-            data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
+        # Proceed with sending the image to the API
+        url = f"http://{self.valid_api}:{API_PORT}/image"
+                
+        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+        data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
             
-            response = requests.post(url, files=img_file, data=data)
-            img_file['files'][1].close()
-            if response.status_code == 200:
-                self.logger.info("Image-rec API called successfully.")
-            else:
-                self.logger.error(f"Failed to call image-rec API: {response.status_code}")
+        response = requests.post(url, files=img_file, data=data)
+        img_file['files'][1].close()
+        if response.status_code == 200:
+            self.logger.info("Image-rec API called successfully.")
+        else:
+            self.logger.error(f"Failed to call image-rec API: {response.status_code}")
 
 
-            results = json.loads(response.content)
-            if results == null:
-                self.stm_link.send("BW20")
-                moved = True
+        results = json.loads(response.content)
 
         # for stopping the robot upon finding a non-bullseye face (checklist: navigating around obstacle)
         if results.get("stop"):
@@ -356,10 +350,14 @@ class RaspberryPi:
 
             self.logger.info("Found non-bullseye face, remaining commands and path cleared.")
             #self.android_queue.put(AndroidMessage("info", "Found non-bullseye face, remaining commands cleared."))
-        else: 
-            self.stm_link.send("asdd") 
+            self.logger.info(f"Image recognition results: {results} ({SYMBOL_MAP.get(results['image_id'])})")
 
-        self.logger.info(f"Image recognition results: {results} ({SYMBOL_MAP.get(results['image_id'])})")
+        # No results from the model
+        elif results.get("retry"):
+            self.stm_link.send("FA00")     
+
+        else: 
+            self.stm_link.send("asdd")
 
         # notify android of image-rec results
         #self.android_queue.put(AndroidMessage("image-rec", results))
