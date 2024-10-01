@@ -10,7 +10,7 @@ from communication.android import AndroidLink, AndroidMessage
 from communication.stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
-from settings import API_IP, API_IP_START, API_IP_END, API_PORT
+from settings import API_IP, API_IP_START, API_PORT
 import socket
 from picamera2 import Picamera2
 from libcamera import Transform
@@ -83,7 +83,7 @@ class RaspberryPi:
         # Create a global Camera Instance
         self.camera = None
         #self.initialize_camera()
-        self.valid_api = API_IP + str(endpoint)
+        self.valid_api = None
 
     def start(self):
         """Starts the RPi orchestrator"""
@@ -94,13 +94,12 @@ class RaspberryPi:
             #self.android_queue.put(AndroidMessage('info', 'You are connected to the RPi!'))
             self.stm_link.connect()
             
-            for endpoint in range(API_IP_START, API_IP_END+1):
+            for endpoint in API_IP_START:
                 self.valid_api = API_IP + str(endpoint)  
                 if self.check_api():
                     self.logger.debug("API successfully set up at", self.valid_api)
                     break
-                elif endpoint == API_IP_END:
-                    self.logger.warning("No valid IP address to connect API")
+                
 
             # Define child processes
             #self.proc_recv_android = Process(target=self.recv_android)
