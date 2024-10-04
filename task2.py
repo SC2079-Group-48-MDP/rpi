@@ -11,6 +11,8 @@ from communication.stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
 from settings import API_IP, API_PORT
+import io
+import subprocess
 
 
 class PiAction:
@@ -62,6 +64,8 @@ class RaspberryPi:
 
         self.ack_count = 0
         self.near_flag = self.manager.Lock()
+        self.small_direction = ""
+        self.big_direction = ""
 
     def start(self):
         """Starts the RPi orchestrator"""
@@ -185,10 +189,13 @@ class RaspberryPi:
                         self.logger.error("API is down! Start command aborted.")
 
                     self.clear_queues()
-                    self.command_queue.put("RS00") # ack_count = 1
+                    # Go forward to the small block
+                    self.command_queue.put("GO00") # ack_count = 1
+                    self.command_queue.put("RW00") # ack_count = 2
                     
+                    """
                     # Small object direction detection
-                    self.small_direction = self.snap_and_rec("Small")
+                    self.small_direction = self.snap_and_rec("small")
                     self.logger.info(f"HERE small direction is: {self.small_direction}")
                     if self.small_direction == "Left Arrow": 
                         self.command_queue.put("OB01") # ack_count = 3
@@ -203,8 +210,8 @@ class RaspberryPi:
                         
                         self.command_queue.put("OB01") # ack_count = 3
                         
-
-                    self.logger.info("Start command received, starting robot on Week 9 task!")
+                    """
+                    self.logger.info("Start command received, starting robot on task 2!")
                     self.android_queue.put(AndroidMessage('status', 'running'))
 
                     # Commencing path following | Main trigger to start movement #
@@ -232,22 +239,34 @@ class RaspberryPi:
                 
                 
                 self.logger.info(f"self.ack_count: {self.ack_count}")
-                if self.ack_count == 3:
+                if self.ack_count == 2: # snap picture of small block
                     try:
-                        self.near_flag.release()
+                        #self.near_flag.release()
                         self.logger.debug("First ACK received, robot reached first obstacle!")
-                        self.small_direction = self.snap_and_rec("Small_Near")
-                        if self.small_direction == "Left Arrow": 
-                            self.command_queue.put("UL00") # ack_count = 5
-                        elif self.small_direction == "Right Arrow":
-                            self.command_queue.put("UR00") # ack_count = 5
-                        else:
-                            self.command_queue.put("UL00") # ack_count = 5
-                            self.logger.debug("Failed first one, going left by default!")
-                    # except:
-                        # self.logger.info("No need to release near_flag")
+                        self.small_direction = self.snap_and_rec("small")
+                        if self.small_direction == "left": 
+                            self.command_queue.put("HL00") # ack_count = 3
+                            self.command_queue.put("FW12") # ack_count = 4
+                            self.command_queue.put("RR00") # ack_count = 5
+                            self.command_queue.put("FW12") # ack_count = 6
+                            self.command_queue.put("HL00") # ack_count = 7
+                        elif self.small_direction == "right":
+                            self.command_queue.put("HR00") # ack_count = 3
+                            self.command_queue.put("FW12") # ack_count = 4
+                            self.command_queue.put("LL00") # ack_count = 5
+                            self.command_queue.put("FW08") # ack_count = 6
+                            self.command_queue.put("HR00") # ack_count = 7
+                        #else:
+                            #self.command_queue.put("UL00") # ack_count = 5
+                            #self.logger.debug("Failed first one, going left by default!")
+                    except:
+                        self.logger.info("No need to release near_flag")
+                        continue
                     
-                # if self.ack_count == 3:
+                if self.ack_count == 7: # Go forward for the big block
+                    self.command_queue.put("GO00") # ack_count = 8
+                    self.command_queue.put("RW00") # ack_count = 9
+                    """
                     except:
                         time.sleep(2)
                         self.logger.debug("First ACK received, robot finished first obstacle!")
@@ -259,12 +278,23 @@ class RaspberryPi:
                         else:
                             self.command_queue.put("PR01") # ack_count = 6
                             self.logger.debug("Failed second one, going right by default!")
-
-                if self.ack_count == 6:
-                    self.logger.debug("Second ACK received from STM32!")
-                    self.android_queue.put(AndroidMessage("status", "finished"))
-                    self.command_queue.put("FIN")
-
+                    """
+                """
+                if self.ack_count == 9: # take picture of big block
+                    self.big_direction = self.snap_and_rec("big")
+                    if self.big_direction == "left": 
+                        self.command_queue.put("HL00") # ack_count = 10
+                        self.command_queue.put("FW12") # ack_count = 11
+                        self.command_queue.put("RR00") # ack_count = 12
+                        self.command_queue.put("FW12") # ack_count = 13
+                        self.command_queue.put("HL00") # ack_count = 14
+                    elif self.big_direction == "right":
+                        self.command_queue.put("HR00") # ack_count = 10
+                        self.command_queue.put("FW12") # ack_count = 11
+                        self.command_queue.put("LL00") # ack_count = 12
+                        self.command_queue.put("FW08") # ack_count = 13
+                        self.command_queue.put("HR00") # ack_count = 14
+                """
                 # except Exception:
                 #     self.logger.warning("Tried to release a released lock!")
             else:
@@ -319,7 +349,7 @@ class RaspberryPi:
         self.logger.info(f"Capturing image for obstacle id: {obstacle_id}")
         signal = "C"
         url = f"http://{API_IP}:{API_PORT}/image"
-        filename = f"{int(time.time())}_{obstacle_id}_{signal}.jpg"
+        filename = f"{int(time.time())}_{obstacle_id}.jpg"
         
         
         con_file    = "PiLCConfig9.txt"
@@ -356,71 +386,115 @@ class RaspberryPi:
         denoise     = config[23]
         quality     = config[24]
         
-        retry_count = 0
+        #retry_count = 0
         
-        while True:
+        #while True:
         
-            retry_count += 1
+            #retry_count += 1
         
-            shutter = shutters[speed]
-            if shutter < 0:
-                shutter = abs(1/shutter)
-            sspeed = int(shutter * 1000000)
-            if (shutter * 1000000) - int(shutter * 1000000) > 0.5:
-                sspeed +=1
+        shutter = shutters[speed]
+        if shutter < 0:
+            shutter = abs(1/shutter)
+        sspeed = int(shutter * 1000000)
+        if (shutter * 1000000) - int(shutter * 1000000) > 0.5:
+            sspeed +=1
                 
-            rpistr = "libcamera-still -e " + extns[extn] + " -n -t 100 -o " + filename
-            rpistr += " --brightness " + str(brightness/100) + " --contrast " + str(contrast/100)
-            rpistr += " --shutter " + str(sspeed)
-            if ev != 0:
-                rpistr += " --ev " + str(ev)
-            if sspeed > 1000000 and mode == 0:
-                rpistr += " --gain " + str(gain) + " --immediate "
-            else:    
-                rpistr += " --gain " + str(gain)
-                if awb == 0:
-                    rpistr += " --awbgains " + str(red/10) + "," + str(blue/10)
-                else:
-                    rpistr += " --awb " + awbs[awb]
-            rpistr += " --metering " + meters[meter]
-            rpistr += " --saturation " + str(saturation/10)
-            rpistr += " --sharpness " + str(sharpness/10)
-            rpistr += " --quality " + str(quality)
-            rpistr += " --denoise "    + denoises[denoise]
-            rpistr += " --metadata - --metadata-format txt >> PiLibtext.txt"
+        """rpistr = "libcamera-still -e " + extns[extn] + " -n -t 100 -o " + filename
+        rpistr += " --brightness " + str(brightness/100) + " --contrast " + str(contrast/100)
+        rpistr += " --shutter " + str(sspeed)
+        if ev != 0:
+            rpistr += " --ev " + str(ev)
+        if sspeed > 1000000 and mode == 0:
+            rpistr += " --gain " + str(gain) + " --immediate "
+        else:    
+            rpistr += " --gain " + str(gain)
+            if awb == 0:
+                rpistr += " --awbgains " + str(red/10) + "," + str(blue/10)
+            else:
+                rpistr += " --awb " + awbs[awb]
+        rpistr += " --metering " + meters[meter]
+        rpistr += " --saturation " + str(saturation/10)
+        rpistr += " --sharpness " + str(sharpness/10)
+        rpistr += " --quality " + str(quality)
+        rpistr += " --denoise "    + denoises[denoise]
+        rpistr += " --metadata - --metadata-format txt >> PiLibtext.txt"
 
-            os.system(rpistr)
+        os.system(rpistr)"""
+        rpistr = [
+                    "libcamera-still" ,
+                    "-e", extns[extn],
+                    "-n",
+                    "-t", "500",
+                    "-o", "-",
+                    "--brightness", str(brightness/100),
+                    "--contrast", str(contrast/100),
+                    "--shutter", str(sspeed),
+                    "--gain", str(gain),
+                    "--metering",  meters[meter],
+                    "--saturation", str(saturation/10),
+                    "--sharpness", str(sharpness/10),
+                    "--quality", str(quality),
+                    "--denoise", denoises[denoise]
+                    
+        ]
+            
+        if ev != 0:
+            rpistr += " --ev " + str(ev)
+        if sspeed > 1000000 and mode == 0:
+            rpistr += " --gain " + str(gain) + " --immediate "
+        else:    
+            rpistr += " --gain " + str(gain)
+            if awb == 0:
+                rpistr += " --awbgains " + str(red/10) + "," + str(blue/10)
+            else:
+                rpistr += " --awb " + awbs[awb]
+            
+        #Execute the command
+        process = subprocess.Popen(rpistr, stdout=subprocess.PIPE)
+        image_data, _ = process.communicate()
+        if process.returncode != 0:
+            self.logger.error(f"Libcamera-still failed.")
+            return
             
             
-            self.logger.debug("Requesting from image API")
-            
-            response = requests.post(url, files={"file": (filename, open(filename,'rb'))})
+        self.logger.debug("Requesting from image API")
+        # Proceed with sending the image to the API
+        url = f"http://{self.valid_api}:{API_PORT}/image"
+        #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
+        data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
+        
+           
+        response = requests.post(url, files={"file": (filename, open(filename,'rb'))})
+        img_file['files'][1].close()
 
-            if response.status_code != 200:
-                self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
-                return
+        if response.status_code != 200:
+            self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
+            return
 
-            results = json.loads(response.content)
+        results = json.loads(response.content)
 
             # Higher brightness retry
             
-            if results['image_id'] != 'NA' or retry_count > 6:
-                break
-            elif retry_count <= 2:
-                self.logger.info(f"Image recognition results: {results}")
-                self.logger.info("Recapturing with same shutter speed...")
-            elif retry_count <= 4:
-                self.logger.info(f"Image recognition results: {results}")
-                self.logger.info("Recapturing with lower shutter speed...")
-                speed -= 1
-            elif retry_count == 5:
-                self.logger.info(f"Image recognition results: {results}")
-                self.logger.info("Recapturing with lower shutter speed...")
-                speed += 3
+        """if results['image_id'] != 'NA' or retry_count > 6:
+            break
+        elif retry_count <= 2:
+            self.logger.info(f"Image recognition results: {results}")
+            self.logger.info("Recapturing with same shutter speed...")
+        elif retry_count <= 4:
+            self.logger.info(f"Image recognition results: {results}")
+            self.logger.info("Recapturing with lower shutter speed...")
+            speed -= 1
+        elif retry_count == 5:
+            self.logger.info(f"Image recognition results: {results}")
+            self.logger.info("Recapturing with lower shutter speed...")
+            speed += 3"""
             
         ans = SYMBOL_MAP.get(results['image_id'])
-        self.logger.info(f"Image recognition results: {results} ({ans})")
-        return ans
+        if ans == "38": direction = "right"
+        if ans == "39": direction = "left"
+        self.logger.info(f"Image recognition results: {results} ({direction})")
+        return direction
 
     def request_stitch(self):
         url = f"http://{API_IP}:{API_PORT}/stitch"
