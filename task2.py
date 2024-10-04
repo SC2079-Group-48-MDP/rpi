@@ -10,9 +10,10 @@ from communication.android import AndroidLink, AndroidMessage
 from communication.stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
-from settings import API_IP, API_PORT
+from settings import API_IP, API_IP_START, API_PORT
 import io
 import subprocess
+from datetime import datetime
 
 
 class PiAction:
@@ -35,6 +36,7 @@ class RaspberryPi:
         self.logger = prepare_logger()
         self.android_link = AndroidLink()
         self.stm_link = STMLink()
+        
 
         # For sharing information between child processes
         self.manager = Manager()
@@ -78,7 +80,11 @@ class RaspberryPi:
             self.stm_link.connect()
 
             # Check Image Recognition and Algorithm API status
-            self.check_api()
+            for endpoint in API_IP_START:
+                self.valid_api = API_IP + str(endpoint)  
+                if self.check_api():
+                    self.logger.debug("API successfully set up at", self.valid_api)
+                    break 
             
             #self.small_direction = self.snap_and_rec("Small")
             #self.logger.info(f"PREINFER small direction is: {self.small_direction}")
@@ -192,6 +198,7 @@ class RaspberryPi:
                     # Go forward to the small block
                     self.command_queue.put("GO00") # ack_count = 1
                     self.command_queue.put("RW00") # ack_count = 2
+                    #self.near_flag.acquire() 
                     
                     """
                     # Small object direction detection
@@ -240,28 +247,26 @@ class RaspberryPi:
                 
                 self.logger.info(f"self.ack_count: {self.ack_count}")
                 if self.ack_count == 2: # snap picture of small block
-                    try:
+                    self.logger.info("Robot reached first obstacle!")
+                    """try:
                         #self.near_flag.release()
-                        self.logger.debug("First ACK received, robot reached first obstacle!")
-                        self.small_direction = self.snap_and_rec("small")
-                        if self.small_direction == "left": 
-                            self.command_queue.put("HL00") # ack_count = 3
-                            self.command_queue.put("FW12") # ack_count = 4
-                            self.command_queue.put("RR00") # ack_count = 5
-                            self.command_queue.put("FW12") # ack_count = 6
-                            self.command_queue.put("HL00") # ack_count = 7
-                        elif self.small_direction == "right":
-                            self.command_queue.put("HR00") # ack_count = 3
-                            self.command_queue.put("FW12") # ack_count = 4
-                            self.command_queue.put("LL00") # ack_count = 5
-                            self.command_queue.put("FW08") # ack_count = 6
-                            self.command_queue.put("HR00") # ack_count = 7
-                        #else:
-                            #self.command_queue.put("UL00") # ack_count = 5
-                            #self.logger.debug("Failed first one, going left by default!")
+                        
                     except:
                         self.logger.info("No need to release near_flag")
-                        continue
+                        continue"""
+                    self.small_direction = self.snap_and_rec("small")
+                    if self.small_direction == "Left Arrow": 
+                        self.command_queue.put("HL00") # ack_count = 3
+                        self.command_queue.put("FW12") # ack_count = 4
+                        self.command_queue.put("RR00") # ack_count = 5
+                        self.command_queue.put("FW12") # ack_count = 6
+                        self.command_queue.put("HL00") # ack_count = 7
+                    elif self.small_direction == "Right Arrow":
+                        self.command_queue.put("HR00") # ack_count = 3
+                        self.command_queue.put("FW12") # ack_count = 4
+                        self.command_queue.put("LL00") # ack_count = 5
+                        self.command_queue.put("FW08") # ack_count = 6
+                        self.command_queue.put("HR00") # ack_count = 7
                     
                 if self.ack_count == 7: # Go forward for the big block
                     self.command_queue.put("GO00") # ack_count = 8
@@ -319,10 +324,10 @@ class RaspberryPi:
             command: str = self.command_queue.get()
             self.unpause.wait()
             self.movement_lock.acquire()
-            stm32_prefixes = ("STOP", "ZZ", "UL", "UR", "PL", "PR", "RS", "OB")
+            stm32_prefixes = ("STOP", "GO", "RW", "HL", "FW", "RR", "HR", "LL")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
-            elif command == "FIN":
+            elif command == "FN":
                 self.unpause.clear()
                 self.movement_lock.release()
                 self.logger.info("Commands queue finished.")
@@ -347,15 +352,13 @@ class RaspberryPi:
         """
         
         self.logger.info(f"Capturing image for obstacle id: {obstacle_id}")
+        self.android_queue.put(AndroidMessage("info", f"Capturing image for obstacle id: {obstacle_id}"))
         signal = "C"
         url = f"http://{API_IP}:{API_PORT}/image"
         filename = f"{int(time.time())}_{obstacle_id}.jpg"
         
         
-        con_file    = "PiLCConfig9.txt"
-        Home_Files  = []
-        Home_Files.append(os.getlogin())
-        config_file = "/home/" + Home_Files[0]+ "/" + con_file
+        config_file = "/home/pi/rpi/PiLCConfig530_outdoor.txt"
 
         extns        = ['jpg','png','bmp','rgb','yuv420','raw']
         shutters     = [-2000,-1600,-1250,-1000,-800,-640,-500,-400,-320,-288,-250,-240,-200,-160,-144,-125,-120,-100,-96,-80,-60,-50,-48,-40,-30,-25,-20,-15,-13,-10,-8,-6,-5,-4,-3,0.4,0.5,0.6,0.8,1,1.1,1.2,2,3,4,5,6,7,8,9,10,11,15,20,25,30,40,50,60,75,100,112,120,150,200,220,230,239,435]
@@ -462,10 +465,12 @@ class RaspberryPi:
         url = f"http://{self.valid_api}:{API_PORT}/image"
         #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
         img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
-        data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
+        data = {'obstacle_id': str(obstacle_id), 'signal': signal}
         
-           
-        response = requests.post(url, files={"file": (filename, open(filename,'rb'))})
+        try:
+            response = requests.post(url, files=img_file, data=data)
+        except:
+            self.logger.error("Error with image API")
         img_file['files'][1].close()
 
         if response.status_code != 200:
@@ -491,10 +496,8 @@ class RaspberryPi:
             speed += 3"""
             
         ans = SYMBOL_MAP.get(results['image_id'])
-        if ans == "38": direction = "right"
-        if ans == "39": direction = "left"
-        self.logger.info(f"Image recognition results: {results} ({direction})")
-        return direction
+        self.logger.info(f"Image recognition results: {results} ({ans})")
+        return ans
 
     def request_stitch(self):
         url = f"http://{API_IP}:{API_PORT}/stitch"
@@ -508,13 +511,22 @@ class RaspberryPi:
         while not self.command_queue.empty():
             self.command_queue.get()
 
+
     def check_api(self) -> bool:
-        url = f"http://{API_IP}:{API_PORT}/status"
+        """Check whether image recognition and algorithm API server is up and running
+
+        Returns:
+            bool: True if running, False if not.
+        """
+        # Check image recognition API
+        url = f"http://{self.valid_api}:{API_PORT}/status"
         try:
             response = requests.get(url, timeout=1)
             if response.status_code == 200:
                 self.logger.debug("API is up!")
                 return True
+            return False
+        # If error, then log, and return False
         except ConnectionError:
             self.logger.warning("API Connection Error")
             return False
