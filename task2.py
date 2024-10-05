@@ -66,8 +66,9 @@ class RaspberryPi:
 
         self.ack_count = 0
         self.near_flag = self.manager.Lock()
-        self.small_direction = ""
-        self.big_direction = ""
+        self.small_direction = None
+        self.big_direction = None
+        self.retry_flag = False
 
     def start(self):
         """Starts the RPi orchestrator"""
@@ -197,27 +198,25 @@ class RaspberryPi:
                     self.clear_queues()
                     # Go forward to the small block
                     self.command_queue.put("GO00") # ack_count = 1
-                    self.command_queue.put("RW00") # ack_count = 2
+                    self.command_queue.put("RW01") # stm will send back SNAP1
                     #self.near_flag.acquire() 
                     
-                    """
-                    # Small object direction detection
-                    self.small_direction = self.snap_and_rec("small")
-                    self.logger.info(f"HERE small direction is: {self.small_direction}")
-                    if self.small_direction == "Left Arrow": 
-                        self.command_queue.put("OB01") # ack_count = 3
-                        self.command_queue.put("UL00") # ack_count = 5
-                    elif self.small_direction == "Right Arrow":
-                        self.command_queue.put("OB01") # ack_count = 3
-                        self.command_queue.put("UR00") # ack_count = 5
+                    # # Small object direction detection
+                    # self.small_direction = self.snap_and_rec("small")
+                    # self.logger.info(f"HERE small direction is: {self.small_direction}")
+                    # if self.small_direction == "Left Arrow": 
+                    #     self.command_queue.put("OB01") # ack_count = 3
+                    #     self.command_queue.put("UL00") # ack_count = 5
+                    # elif self.small_direction == "Right Arrow":
+                    #     self.command_queue.put("OB01") # ack_count = 3
+                    #     self.command_queue.put("UR00") # ack_count = 5
 
-                    elif self.small_direction == None or self.small_direction == 'None':
-                        self.logger.info("Acquiring near_flag log")
-                        self.near_flag.acquire()             
+                    # elif self.small_direction == None or self.small_direction == 'None':
+                    #     self.logger.info("Acquiring near_flag log")
+                    #     self.near_flag.acquire()             
                         
-                        self.command_queue.put("OB01") # ack_count = 3
+                    #     self.command_queue.put("OB01") # ack_count = 3
                         
-                    """
                     self.logger.info("Start command received, starting robot on task 2!")
                     self.android_queue.put(AndroidMessage('status', 'running'))
 
@@ -233,75 +232,74 @@ class RaspberryPi:
             message: str = self.stm_link.recv()
             # Acknowledgement from STM32
             if message.startswith("ACK"):
-
                 self.ack_count += 1
-
                 # Release movement lock
                 try:
                     self.movement_lock.release()
                 except Exception:
                     self.logger.warning("Tried to release a released lock!")
+                self.logger.info(f"ACK from STM32 received, ACK count now:{self.ack_count}")                
 
-                self.logger.debug(f"ACK from STM32 received, ACK count now:{self.ack_count}")
-                
-                
-                self.logger.info(f"self.ack_count: {self.ack_count}")
-                if self.ack_count == 2: # snap picture of small block
+            # Robot in position to do image rec
+            elif message.startswith("SNAP"):
+                self.logger.info("Sending API requests to image server")
+                _, obstacle_id = message.split('_')
+                if message.endswith("1") # Reached first obstacle
                     self.logger.info("Robot reached first obstacle!")
-                    """try:
-                        #self.near_flag.release()
-                        
-                    except:
-                        self.logger.info("No need to release near_flag")
-                        continue"""
                     self.small_direction = self.snap_and_rec("small")
                     if self.small_direction == "Left Arrow": 
-                        self.command_queue.put("HL00") # ack_count = 3
-                        self.command_queue.put("FW12") # ack_count = 4
-                        self.command_queue.put("RR00") # ack_count = 5
-                        self.command_queue.put("FW12") # ack_count = 6
-                        self.command_queue.put("HL00") # ack_count = 7
+                        # When we retry, we move back to original position after image rec
+                        if self.retry_flag:
+                            self.command_queue.put("FW00")
+                            self.retry_flag = False
+                        self.command_queue.put("HL00") # ack_count = 2
+                        self.command_queue.put("FW12") # ack_count = 3
+                        self.command_queue.put("RR00") # ack_count = 4
+                        self.command_queue.put("FW12") # ack_count = 5
+                        self.command_queue.put("HL00") # ack_count = 6
                     elif self.small_direction == "Right Arrow":
-                        self.command_queue.put("HR00") # ack_count = 3
-                        self.command_queue.put("FW12") # ack_count = 4
-                        self.command_queue.put("LL00") # ack_count = 5
-                        self.command_queue.put("FW08") # ack_count = 6
-                        self.command_queue.put("HR00") # ack_count = 7
-                    
-                if self.ack_count == 7: # Go forward for the big block
-                    self.command_queue.put("GO00") # ack_count = 8
-                    self.command_queue.put("RW00") # ack_count = 9
-                    """
-                    except:
-                        time.sleep(2)
-                        self.logger.debug("First ACK received, robot finished first obstacle!")
-                        self.large_direction = self.snap_and_rec("Large")
-                        if self.large_direction == "Left Arrow": 
-                            self.command_queue.put("PL01") # ack_count = 6
-                        elif self.large_direction == "Right Arrow":
-                            self.command_queue.put("PR01") # ack_count = 6
-                        else:
-                            self.command_queue.put("PR01") # ack_count = 6
-                            self.logger.debug("Failed second one, going right by default!")
-                    """
-                """
-                if self.ack_count == 9: # take picture of big block
+                        # When we retry, we move back to original position after image rec
+                        if self.retry_flag:
+                            self.command_queue.put("FW00")
+                            self.retry_flag = False
+                        self.command_queue.put("HR00") # ack_count = 2
+                        self.command_queue.put("FW12") # ack_count = 3
+                        self.command_queue.put("LL00") # ack_count = 4
+                        self.command_queue.put("FW08") # ack_count = 5
+                        self.command_queue.put("HR00") # ack_count = 6
+                    # Retry logic: If image rec fail, robot will reverse then send back SNAP1
+                    else: # We dont care about non-left/right arrow
+                        self.retry_flag = True
+                        command = "RW0" + obstacle_id
+                        self.command_queue.put(command)
+                if message.endswith("2") # Reached second obstacle
+                    self.logger.info("Robot reached second obstacle!")
                     self.big_direction = self.snap_and_rec("big")
-                    if self.big_direction == "left": 
-                        self.command_queue.put("HL00") # ack_count = 10
-                        self.command_queue.put("FW12") # ack_count = 11
-                        self.command_queue.put("RR00") # ack_count = 12
-                        self.command_queue.put("FW12") # ack_count = 13
-                        self.command_queue.put("HL00") # ack_count = 14
-                    elif self.big_direction == "right":
-                        self.command_queue.put("HR00") # ack_count = 10
-                        self.command_queue.put("FW12") # ack_count = 11
-                        self.command_queue.put("LL00") # ack_count = 12
-                        self.command_queue.put("FW08") # ack_count = 13
-                        self.command_queue.put("HR00") # ack_count = 14
-                """
-                # except Exception:
-                #     self.logger.warning("Tried to release a released lock!")
+                    if self.big_direction == "Left Arrow": 
+                        # When we retry, we move back to original position after image rec
+                        if self.retry_flag:
+                            self.command_queue.put("FW00")
+                            self.retry_flag = False
+                        self.big_direction.put("HL00") # ack_count = 2
+                        self.big_direction.put("FW12") # ack_count = 3
+                        self.big_direction.put("RR00") # ack_count = 4
+                        self.big_direction.put("FW12") # ack_count = 5
+                        self.big_direction.put("HL00") # ack_count = 6
+                    elif self.big_direction == "Right Arrow":
+                        # When we retry, we move back to original position after image rec
+                        if self.retry_flag:
+                            self.command_queue.put("FW00")
+                            self.retry_flag = False
+                        self.big_direction.put("HR00") # ack_count = 2
+                        self.big_direction.put("FW12") # ack_count = 3
+                        self.big_direction.put("LL00") # ack_count = 4
+                        self.big_direction.put("FW08") # ack_count = 5
+                        self.big_direction.put("HR00") # ack_count = 6
+                    # Retry logic: If image rec fail, robot will reverse then send back SNAP1
+                    else: # We dont care about non-left/right arrow
+                        self.retry_flag = True
+                        command = "RW0" + obstacle_id
+                        self.command_queue.put(command)
             else:
                 self.logger.warning(
                     f"Ignored unknown message from STM: {message}")
