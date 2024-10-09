@@ -244,7 +244,7 @@ class RaspberryPi:
             elif message.startswith("SNAP"):
                 self.logger.info("Sending API requests to image server")
                 _, obstacle_id = message.split('_')
-                if message.endswith("1") # Reached first obstacle
+                if message.endswith("1"): # Reached first obstacle
                     self.logger.info("Robot reached first obstacle!")
                     self.small_direction = self.snap_and_rec("small")
                     if self.small_direction == "Left Arrow": 
@@ -272,7 +272,7 @@ class RaspberryPi:
                         self.retry_flag = True
                         command = "RW0" + obstacle_id
                         self.command_queue.put(command)
-                if message.endswith("2") # Reached second obstacle
+                if message.endswith("2"): # Reached second obstacle
                     self.logger.info("Robot reached second obstacle!")
                     self.big_direction = self.snap_and_rec("big")
                     if self.big_direction == "Left Arrow": 
