@@ -238,7 +238,7 @@ class RaspberryPi:
                     self.movement_lock.release()
                 except Exception:
                     self.logger.warning("Tried to release a released lock!")
-                self.logger.info(f"ACK from STM32 received, ACK count now:{self.ack_count}")                
+                self.logger.info(f"ACK from STM32 received, ACK count now:{self.ack_count}")   
 
             # Robot in position to do image rec
             elif message.startswith("SNAP"):
@@ -247,59 +247,90 @@ class RaspberryPi:
                 if message.endswith("1"): # Reached first obstacle
                     self.logger.info("Robot reached first obstacle!")
                     self.small_direction = self.snap_and_rec("small")
-                    if self.small_direction == "Left Arrow": 
+                    
+                    if self.small_direction == "Left": 
                         # When we retry, we move back to original position after image rec
-                        if self.retry_flag:
-                            self.command_queue.put("FW00")
-                            self.retry_flag = False
-                        self.command_queue.put("HL00") # ack_count = 2
-                        self.command_queue.put("FW12") # ack_count = 3
+                        #if self.retry_flag is True:
+                            #self.command_queue.put("FW10")
+                            #self.retry_flag = False
+                        self.command_queue.put("FW10") # ack_count = 2
+                        self.command_queue.put("HL00") # ack_count = 3
+                        self.command_queue.put("FW10") # ack_count = 4
                         self.command_queue.put("RR00") # ack_count = 4
-                        self.command_queue.put("FW12") # ack_count = 5
-                        self.command_queue.put("HL00") # ack_count = 6
-                    elif self.small_direction == "Right Arrow":
+                        self.command_queue.put("FW08") # ack_count = 4
+                        self.command_queue.put("HL00") # ack_count = 5
+                        self.command_queue.put("GO00") # ack_count = 6
+                        self.command_queue.put("RW02") # ack_count = 7
+                        self.logger.info("Commands pushed to queue!")
+                    elif self.small_direction == "Right":
                         # When we retry, we move back to original position after image rec
-                        if self.retry_flag:
-                            self.command_queue.put("FW00")
-                            self.retry_flag = False
+                        #if self.retry_flag is True:
+                            #self.command_queue.put("FW10")
+                            #self.retry_flag = False
                         self.command_queue.put("HR00") # ack_count = 2
-                        self.command_queue.put("FW12") # ack_count = 3
+                        self.command_queue.put("FW08") # ack_count = 3
+                        self.command_queue.put("FW10") # ack_count = 4
                         self.command_queue.put("LL00") # ack_count = 4
-                        self.command_queue.put("FW08") # ack_count = 5
-                        self.command_queue.put("HR00") # ack_count = 6
+                        self.command_queue.put("FW10") # ack_count = 4
+                        self.command_queue.put("HR00") # ack_count = 5
+                        self.command_queue.put("GO00") # ack_count = 6
+                        self.command_queue.put("RW02") # ack_count = 7
+                        self.logger.info("Commands pushed to queue!")
                     # Retry logic: If image rec fail, robot will reverse then send back SNAP1
-                    else: # We dont care about non-left/right arrow
-                        self.retry_flag = True
-                        command = "RW0" + obstacle_id
-                        self.command_queue.put(command)
+                    #else: # We dont care about non-left/right arrow
+                        #self.logger.debug("Error detecting. Retry again.")
+                        #self.retry_flag = True
+                        #command = "FA0" + obstacle_id
+                        #self.command_queue.put(command)
                 if message.endswith("2"): # Reached second obstacle
                     self.logger.info("Robot reached second obstacle!")
                     self.big_direction = self.snap_and_rec("big")
-                    if self.big_direction == "Left Arrow": 
+                    #self.logger.debug("Big Direction:", self.big_direction)
+                    if self.big_direction == "Left": 
                         # When we retry, we move back to original position after image rec
-                        if self.retry_flag:
-                            self.command_queue.put("FW00")
-                            self.retry_flag = False
-                        self.big_direction.put("HL00") # ack_count = 2
-                        self.big_direction.put("FW12") # ack_count = 3
-                        self.big_direction.put("RR00") # ack_count = 4
-                        self.big_direction.put("FW12") # ack_count = 5
-                        self.big_direction.put("HL00") # ack_count = 6
-                    elif self.big_direction == "Right Arrow":
+                        #if self.retry_flag is True:
+                            #self.command_queue.put("FW10")
+                            #self.retry_flag = False
+                        self.command_queue.put("LL00") # ack_count = 8
+                        self.command_queue.put("UR00") # ack_count = 9
+                        self.command_queue.put("FW50") # ack_count = 10
+                        self.command_queue.put("RR00") # ack_count = 11
+                        
+                        # Car will be at the edge facing carpark
+                        # Next set of commands for car to park at the carpark
+                        self.command_queue.put("EN00") # ack_count = 12
+                        self.command_queue.put("RR00") # ack_count = 13
+                        self.command_queue.put("LL00") # ack_count = 14
+                        self.command_queue.put("GG00") # ack_count = 15
+                        self.command_queue.put("FN")
+                    
+                    elif self.big_direction == "Right":
                         # When we retry, we move back to original position after image rec
-                        if self.retry_flag:
-                            self.command_queue.put("FW00")
-                            self.retry_flag = False
-                        self.big_direction.put("HR00") # ack_count = 2
-                        self.big_direction.put("FW12") # ack_count = 3
-                        self.big_direction.put("LL00") # ack_count = 4
-                        self.big_direction.put("FW08") # ack_count = 5
-                        self.big_direction.put("HR00") # ack_count = 6
+                        #if self.retry_flag is True:
+                            #self.command_queue.put("FW10")
+                            #self.retry_flag = False
+                        self.command_queue.put("RR00") # ack_count = 8
+                        self.command_queue.put("UL00") # ack_count = 9
+                        self.command_queue.put("FW55") # ack_count = 10
+                        self.command_queue.put("LL00") # ack_count = 11
+                        
+                        # Car will be at the edge facing carpark
+                        # Next set of commands for car to park at the carpark
+                        self.command_queue.put("EN00") # ack_count = 12
+                        self.command_queue.put("LL00") # ack_count = 13
+                        self.command_queue.put("RR00") # ack_count = 14
+                        self.command_queue.put("GG00") # ack_count = 15
+                        self.command_queue.put("FN") 
                     # Retry logic: If image rec fail, robot will reverse then send back SNAP1
-                    else: # We dont care about non-left/right arrow
-                        self.retry_flag = True
-                        command = "RW0" + obstacle_id
-                        self.command_queue.put(command)
+                    #else: # We dont care about non-left/right arrow
+                        #self.retry_flag = True
+                        #command = "FA0" + obstacle_id
+                        #self.command_queue.put(command)
+                try:
+                    self.movement_lock.release()
+                    self.logger.info("Movement lock released")
+                except Exception:
+                    self.logger.warning("Tried to release a released lock!")
             else:
                 self.logger.warning(
                     f"Ignored unknown message from STM: {message}")
@@ -318,11 +349,13 @@ class RaspberryPi:
                 self.logger.debug("Event set: Android dropped")
 
     def command_follower(self) -> None:
+        
         while True:
             command: str = self.command_queue.get()
             self.unpause.wait()
+            self.logger.info("Unpuase has been set!")
             self.movement_lock.acquire()
-            stm32_prefixes = ("STOP", "GO", "RW", "HL", "FW", "RR", "HR", "LL")
+            stm32_prefixes = ("GO", "RW", "HL", "FW", "RR", "HR", "LL", "GG", "FA", "UL", "UR", "EN")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
             elif command == "FN":
@@ -460,7 +493,7 @@ class RaspberryPi:
             
         self.logger.debug("Requesting from image API")
         # Proceed with sending the image to the API
-        url = f"http://{self.valid_api}:{API_PORT}/image"
+        url = f"http://{self.valid_api}:{API_PORT}/image2"
         #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
         img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
         data = {'obstacle_id': str(obstacle_id), 'signal': signal}
@@ -493,9 +526,8 @@ class RaspberryPi:
             self.logger.info("Recapturing with lower shutter speed...")
             speed += 3"""
             
-        ans = SYMBOL_MAP.get(results['image_id'])
-        self.logger.info(f"Image recognition results: {results} ({ans})")
-        return ans
+        self.logger.info(f"Image recognition results: {results} ")
+        return results["class_name"]
 
     def request_stitch(self):
         url = f"http://{API_IP}:{API_PORT}/stitch"
