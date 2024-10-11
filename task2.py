@@ -14,6 +14,7 @@ from settings import API_IP, API_IP_START, API_PORT
 import io
 import subprocess
 from datetime import datetime
+from PIL import Image
 
 
 class PiAction:
@@ -257,9 +258,10 @@ class RaspberryPi:
                         self.command_queue.put("HL00") # ack_count = 3
                         self.command_queue.put("FW10") # ack_count = 4
                         self.command_queue.put("RR00") # ack_count = 4
-                        self.command_queue.put("FW08") # ack_count = 4
+                        #self.command_queue.put("FW17") # ack_count = 4 For outdoors
+                        self.command_queue.put("FW10") # ack_count = 4 For indoors
                         self.command_queue.put("HL00") # ack_count = 5
-                        self.command_queue.put("GO00") # ack_count = 6
+                        self.command_queue.put("GF00") # ack_count = 6
                         self.command_queue.put("RW02") # ack_count = 7
                         self.logger.info("Commands pushed to queue!")
                     elif self.small_direction == "Right":
@@ -268,12 +270,12 @@ class RaspberryPi:
                             #self.command_queue.put("FW10")
                             #self.retry_flag = False
                         self.command_queue.put("HR00") # ack_count = 2
-                        self.command_queue.put("FW08") # ack_count = 3
-                        self.command_queue.put("FW10") # ack_count = 4
+                        self.command_queue.put("FW15") # ack_count = 3
+                        
                         self.command_queue.put("LL00") # ack_count = 4
-                        self.command_queue.put("FW10") # ack_count = 4
+                        self.command_queue.put("FW12") # ack_count = 4
                         self.command_queue.put("HR00") # ack_count = 5
-                        self.command_queue.put("GO00") # ack_count = 6
+                        self.command_queue.put("GF00") # ack_count = 6
                         self.command_queue.put("RW02") # ack_count = 7
                         self.logger.info("Commands pushed to queue!")
                     # Retry logic: If image rec fail, robot will reverse then send back SNAP1
@@ -318,6 +320,7 @@ class RaspberryPi:
                         # Next set of commands for car to park at the carpark
                         self.command_queue.put("EN00") # ack_count = 12
                         self.command_queue.put("LL00") # ack_count = 13
+                        self.command_queue.put("BW12") # ack_count = 13
                         self.command_queue.put("RR00") # ack_count = 14
                         self.command_queue.put("GG00") # ack_count = 15
                         self.command_queue.put("FN") 
@@ -355,7 +358,7 @@ class RaspberryPi:
             self.unpause.wait()
             self.logger.info("Unpuase has been set!")
             self.movement_lock.acquire()
-            stm32_prefixes = ("GO", "RW", "HL", "FW", "RR", "HR", "LL", "GG", "FA", "UL", "UR", "EN")
+            stm32_prefixes = ("GO", "RW", "HL", "FW", "RR", "HR", "LL", "GG", "FA", "UL", "UR", "EN", "GF", "BW")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
             elif command == "FN":
@@ -364,7 +367,8 @@ class RaspberryPi:
                 self.logger.info("Commands queue finished.")
                 self.android_queue.put(AndroidMessage("info", "Commands queue finished."))
                 self.android_queue.put(AndroidMessage("status", "finished"))
-                self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
+                #self.rpi_action_queue.put(PiAction(cat="stitch", value=""))
+                self.request_stitch()
             else:
                 raise Exception(f"Unknown command: {command}")
 
@@ -454,6 +458,8 @@ class RaspberryPi:
         rpistr += " --metadata - --metadata-format txt >> PiLibtext.txt"
 
         os.system(rpistr)"""
+        
+        start_time = time.perf_counter()
         rpistr = [
                     "libcamera-still" ,
                     "-e", extns[extn],
@@ -488,16 +494,23 @@ class RaspberryPi:
         image_data, _ = process.communicate()
         if process.returncode != 0:
             self.logger.error(f"Libcamera-still failed.")
-            return
+            
+            
+        img = Image.open(io.BytesIO(image_data))
+        compressed_image_io = io.BytesIO()
+        img.save(compressed_image_io, format="JPEG", quality=85)
+        
+        compressed_image_io.seek(0)
             
             
         self.logger.debug("Requesting from image API")
         # Proceed with sending the image to the API
-        url = f"http://{self.valid_api}:{API_PORT}/image2"
+        url = f"http://{self.valid_api}:{API_PORT}/image"
         #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
+        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', compressed_image_io, 'image/jpeg')}
         data = {'obstacle_id': str(obstacle_id), 'signal': signal}
-        
+        end_time = time.perf_counter()
+        self.logger.info(f"Total time taken: {end_time - start_time:.2f} seconds")
         try:
             response = requests.post(url, files=img_file, data=data)
         except:
@@ -525,12 +538,12 @@ class RaspberryPi:
             self.logger.info(f"Image recognition results: {results}")
             self.logger.info("Recapturing with lower shutter speed...")
             speed += 3"""
-            
+        
         self.logger.info(f"Image recognition results: {results} ")
         return results["class_name"]
 
     def request_stitch(self):
-        url = f"http://{API_IP}:{API_PORT}/stitch"
+        url = f"http://{self.valid_api}:{API_PORT}/stitch"
         response = requests.get(url)
         if response.status_code != 200:
             self.logger.error("Something went wrong when requesting stitch from the API.")
