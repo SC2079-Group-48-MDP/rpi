@@ -16,6 +16,7 @@ from picamera2 import Picamera2
 from libcamera import Transform
 import cv2
 import io
+import subprocess
 
 
 class PiAction:
@@ -412,7 +413,7 @@ class RaspberryPi:
         #self.retry_flag = False
         #self.reattempt_lock.acquire()
         try:
-            config_file = "/home/pi/rpi/PiLCConfig530.txt"
+            config_file = "/home/pi/rpi/PiLCConfig530_outdoor.txt"
             file_path = f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg'
 
             extns        = ['jpg','png','bmp','rgb','yuv420','raw']
@@ -450,7 +451,7 @@ class RaspberryPi:
             sspeed = int(shutter * 1000000)
             if (shutter * 1000000) - int(shutter * 1000000) > 0.5:
                 sspeed +=1
-                
+            """    
             rpistr = "libcamera-still -e " + extns[extn] + " -n -t 100 -o " + file_path
             rpistr += " --brightness " + str(brightness/100) + " --contrast " + str(contrast/100)
             rpistr += " --shutter " + str(sspeed)
@@ -470,8 +471,44 @@ class RaspberryPi:
             rpistr += " --quality " + str(quality)
             rpistr += " --denoise "    + denoises[denoise]
             rpistr += " --metadata - --metadata-format txt >> PiLibtext.txt"
-
             os.system(rpistr)
+            """
+            rpistr = [
+                    "libcamera-still" ,
+                    "-e", extns[extn],
+                    "-n",
+                    "-t", "500",
+                    "-o", "-",
+                    "--brightness", str(brightness/100),
+                    "--contrast", str(contrast/100),
+                    "--shutter", str(sspeed),
+                    "--gain", str(gain),
+                    "--metering",  meters[meter],
+                    "--saturation", str(saturation/10),
+                    "--sharpness", str(sharpness/10),
+                    "--quality", str(quality),
+                    "--denoise", denoises[denoise]
+                    
+            ]
+            
+            if ev != 0:
+                rpistr += " --ev " + str(ev)
+            if sspeed > 1000000 and mode == 0:
+                rpistr += " --gain " + str(gain) + " --immediate "
+            else:    
+                rpistr += " --gain " + str(gain)
+                if awb == 0:
+                    rpistr += " --awbgains " + str(red/10) + "," + str(blue/10)
+                else:
+                    rpistr += " --awb " + awbs[awb]
+            
+            #Execute the command
+            process = subprocess.Popen(rpistr, stdout=subprocess.PIPE)
+            image_data, _ = process.communicate()
+            if process.returncode != 0:
+                self.logger.error(f"Libcamera-still failed.")
+                return
+            
             
             # Initialize and configure the camera each time
             #self.camera = Picamera2()
@@ -494,7 +531,8 @@ class RaspberryPi:
         
         # Proceed with sending the image to the API
         url = f"http://{self.valid_api}:{API_PORT}/image"
-        img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+        #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
+        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
         data = {'obstacle_id': str(obstacle_id), 'signal': 'L'}
         
         response = requests.post(url, files=img_file, data=data)
@@ -507,11 +545,7 @@ class RaspberryPi:
 
         results = json.loads(response.content)
         self.logger.info(f"Image recognition results: {results} ({SYMBOL_MAP.get(results['image_id'])})")
-        """    
-        if results.get("retry"):
-            self.retry_flag = True
-            command = 'FA0' + str(obstacle_id)
-            self.stm_link.send(command)  """
+
         self.movement_lock.release()
         try:
             self.retrylock.release()
