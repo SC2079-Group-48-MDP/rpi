@@ -254,15 +254,15 @@ class RaspberryPi:
                         #if self.retry_flag is True:
                             #self.command_queue.put("FW10")
                             #self.retry_flag = False
-                        self.command_queue.put("FW10") # ack_count = 2
+                        self.command_queue.put("BW07") # ack_count = 2
                         self.command_queue.put("HL00") # ack_count = 3
-                        self.command_queue.put("FW10") # ack_count = 4
+                        self.command_queue.put("FW15") # ack_count = 4
                         self.command_queue.put("RR00") # ack_count = 4
                         #self.command_queue.put("FW17") # ack_count = 4 For outdoors
-                        self.command_queue.put("FW10") # ack_count = 4 For indoors
+                        self.command_queue.put("FW15") # ack_count = 4 For indoors
                         self.command_queue.put("HL00") # ack_count = 5
                         self.command_queue.put("GF00") # ack_count = 6
-                        self.command_queue.put("RW02") # ack_count = 7
+                        self.command_queue.put("PW02") # ack_count = 7
                         self.logger.info("Commands pushed to queue!")
                     elif self.small_direction == "Right":
                         # When we retry, we move back to original position after image rec
@@ -270,13 +270,13 @@ class RaspberryPi:
                             #self.command_queue.put("FW10")
                             #self.retry_flag = False
                         self.command_queue.put("HR00") # ack_count = 2
-                        self.command_queue.put("FW15") # ack_count = 3
+                        self.command_queue.put("FW12") # ack_count = 3
                         
                         self.command_queue.put("LL00") # ack_count = 4
-                        self.command_queue.put("FW12") # ack_count = 4
+                        self.command_queue.put("FW10") # ack_count = 4
                         self.command_queue.put("HR00") # ack_count = 5
                         self.command_queue.put("GF00") # ack_count = 6
-                        self.command_queue.put("RW02") # ack_count = 7
+                        self.command_queue.put("PW02") # ack_count = 7
                         self.logger.info("Commands pushed to queue!")
                     # Retry logic: If image rec fail, robot will reverse then send back SNAP1
                     #else: # We dont care about non-left/right arrow
@@ -295,13 +295,14 @@ class RaspberryPi:
                             #self.retry_flag = False
                         self.command_queue.put("LL00") # ack_count = 8
                         self.command_queue.put("UR00") # ack_count = 9
-                        self.command_queue.put("FW50") # ack_count = 10
+                        self.command_queue.put("FW55") # ack_count = 10
                         self.command_queue.put("RR00") # ack_count = 11
                         
                         # Car will be at the edge facing carpark
                         # Next set of commands for car to park at the carpark
                         self.command_queue.put("EN00") # ack_count = 12
                         self.command_queue.put("RR00") # ack_count = 13
+                        #self.command_queue.put("FW10")
                         self.command_queue.put("LL00") # ack_count = 14
                         self.command_queue.put("GG00") # ack_count = 15
                         self.command_queue.put("FN")
@@ -313,14 +314,14 @@ class RaspberryPi:
                             #self.retry_flag = False
                         self.command_queue.put("RR00") # ack_count = 8
                         self.command_queue.put("UL00") # ack_count = 9
-                        self.command_queue.put("FW55") # ack_count = 10
+                        self.command_queue.put("FW60") # ack_count = 10 Indoors
                         self.command_queue.put("LL00") # ack_count = 11
                         
                         # Car will be at the edge facing carpark
                         # Next set of commands for car to park at the carpark
                         self.command_queue.put("EN00") # ack_count = 12
                         self.command_queue.put("LL00") # ack_count = 13
-                        self.command_queue.put("BW12") # ack_count = 13
+                        self.command_queue.put("BW08") # ack_count = 13
                         self.command_queue.put("RR00") # ack_count = 14
                         self.command_queue.put("GG00") # ack_count = 15
                         self.command_queue.put("FN") 
@@ -358,7 +359,7 @@ class RaspberryPi:
             self.unpause.wait()
             self.logger.info("Unpuase has been set!")
             self.movement_lock.acquire()
-            stm32_prefixes = ("GO", "RW", "HL", "FW", "RR", "HR", "LL", "GG", "FA", "UL", "UR", "EN", "GF", "BW")
+            stm32_prefixes = ("GO", "RW", "HL", "FW", "RR", "HR", "LL", "GG", "FA", "UL", "UR", "EN", "GF", "BW", "PW")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
             elif command == "FN":
@@ -461,7 +462,7 @@ class RaspberryPi:
         
         start_time = time.perf_counter()
         rpistr = [
-                    "libcamera-still" ,
+                    "libcamera-jpeg" ,
                     "-e", extns[extn],
                     "-n",
                     "-t", "500",
@@ -496,30 +497,33 @@ class RaspberryPi:
             self.logger.error(f"Libcamera-still failed.")
             
             
-        img = Image.open(io.BytesIO(image_data))
-        compressed_image_io = io.BytesIO()
-        img.save(compressed_image_io, format="JPEG", quality=85)
+        #img = Image.open(io.BytesIO(image_data))
+        #compressed_image_io = io.BytesIO()
+        #img.save(compressed_image_io, format="JPEG", quality=85)
         
-        compressed_image_io.seek(0)
+        #compressed_image_io.seek(0)
             
             
         self.logger.debug("Requesting from image API")
         # Proceed with sending the image to the API
         url = f"http://{self.valid_api}:{API_PORT}/image"
         #img_file = {'files': (file_path, open(file_path, 'rb'), 'image/jpeg')}
-        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', compressed_image_io, 'image/jpeg')}
+        img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', io.BytesIO(image_data), 'image/jpeg')}
+        
+        #img_file = {"files": (f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg', compressed_image_io, 'image/jpeg')}
         data = {'obstacle_id': str(obstacle_id), 'signal': signal}
         end_time = time.perf_counter()
         self.logger.info(f"Total time taken: {end_time - start_time:.2f} seconds")
         try:
             response = requests.post(url, files=img_file, data=data)
-        except:
-            self.logger.error("Error with image API")
+        except Exception as e:
+            self.logger.error(f"Error with image API: {e}")
+            return "Right"
         img_file['files'][1].close()
 
         if response.status_code != 200:
             self.logger.error("Something went wrong when requesting path from image-rec API. Please try again.")
-            return
+            return "Right"
 
         results = json.loads(response.content)
 
@@ -540,7 +544,7 @@ class RaspberryPi:
             speed += 3"""
         
         self.logger.info(f"Image recognition results: {results} ")
-        return results["class_name"]
+        return results["class_name"] if results["class_name"] != "NA" else "Right"
 
     def request_stitch(self):
         url = f"http://{self.valid_api}:{API_PORT}/stitch"
