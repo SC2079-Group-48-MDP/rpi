@@ -17,6 +17,7 @@ from libcamera import Transform
 import cv2
 import io
 import subprocess
+import time
 
 
 class PiAction:
@@ -413,7 +414,7 @@ class RaspberryPi:
         #self.retry_flag = False
         #self.reattempt_lock.acquire()
         try:
-            config_file = "/home/pi/rpi/PiLCConfig530_outdoor.txt"
+            config_file = "/home/pi/rpi/PiLCConfig530_indoor.txt"
             file_path = f'/home/pi/rpi/{datetime.now().strftime("%Y%m%d_%H%M%S")}_{obstacle_id}.jpg'
 
             extns        = ['jpg','png','bmp','rgb','yuv420','raw']
@@ -474,7 +475,7 @@ class RaspberryPi:
             os.system(rpistr)
             """
             rpistr = [
-                    "libcamera-still" ,
+                    "libcamera-jpeg" ,
                     "-e", extns[extn],
                     "-n",
                     "-t", "500",
@@ -624,7 +625,10 @@ class RaspberryPi:
         body = {**data, "big_turn": "0", "robot_x": robot_x,
                 "robot_y": robot_y, "robot_dir": robot_dir, "retrying": retrying}
         url = f"http://{self.valid_api}:{API_PORT}/path"
+        start_time = time.perf_counter()
         response = requests.post(url, json=body)
+        end_time = time.perf_counter()
+        self.logger.info(f"Total time taken: {end_time - start_time:.2f} seconds for algo.")
 
         # Error encountered at the server, return early
         if response.status_code != 200:
